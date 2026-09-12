@@ -1,6 +1,6 @@
 # xmip-core-contract-hl7-v2
 
-the HL7 v2 content contract: a sound ER7 message always, of a bound message type and version when a Location names one, and the acknowledgement composed from the message it answers. Every HL7 v2 version lives here. A technology of [xmip-core-contract](https://github.com/IlleNilsson/xmip-core-contract).
+the HL7 v2 content contract: a sound ER7 message always, of a bound message type and version when a Location names one, and the acknowledgment composed from the message it answers. Every HL7 v2 version lives here. A technology of [xmip-core-contract](https://github.com/IlleNilsson/xmip-core-contract).
 
 ## Toolchain
 
