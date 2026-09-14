@@ -150,12 +150,11 @@ impl<'a> Message<'a> {
     }
 }
 
+/// A `malformed` issue placed at `path`: ER7 can always say which segment or
+/// field stopped it being a message, so the capability's unplaced one is not
+/// used here.
 fn malformed(message: &str, path: &str) -> ValidationIssue {
-    ValidationIssue {
-        code: "malformed".to_string(),
-        message: message.to_string(),
-        path: Some(path.to_string()),
-    }
+    ValidationIssue::at("malformed", message, path)
 }
 
 /// The HL7 v2 contract, bare or bound to a message type.
@@ -211,11 +210,16 @@ impl Contract for Hl7v2 {
         let mut issues = Vec::new();
         let text = match std::str::from_utf8(stream.bytes()) {
             Ok(text) => text,
-            Err(error) => return Ok(result(vec![malformed(&format!("not text: {error}"), "")])),
+            Err(error) => {
+                return Ok(ValidationResult::of(vec![malformed(
+                    &format!("not text: {error}"),
+                    "",
+                )]));
+            }
         };
         let message = match Message::parse(text) {
             Ok(message) => message,
-            Err(issue) => return Ok(result(vec![issue])),
+            Err(issue) => return Ok(ValidationResult::of(vec![issue])),
         };
         let (code, event) = message.message_type();
         if code.is_empty() {
@@ -223,36 +227,21 @@ impl Contract for Hl7v2 {
         }
         if let Some(wanted) = &self.message_type {
             if code != wanted.code || event != wanted.event {
-                issues.push(ValidationIssue {
-                    code: "message-type".to_string(),
-                    message: format!(
-                        "is {code}^{event}, the contract is {}^{}",
-                        wanted.code, wanted.event
-                    ),
-                    path: Some("MSH-9".to_string()),
-                });
+                let message = format!(
+                    "is {code}^{event}, the contract is {}^{}",
+                    wanted.code, wanted.event
+                );
+                issues.push(ValidationIssue::at("message-type", &message, "MSH-9"));
             }
             if let Some(version) = &wanted.version
                 && message.field("MSH", 12) != version
             {
-                issues.push(ValidationIssue {
-                    code: "version".to_string(),
-                    message: format!(
-                        "is {:?}, the contract is {version}",
-                        message.field("MSH", 12)
-                    ),
-                    path: Some("MSH-12".to_string()),
-                });
+                let actual = message.field("MSH", 12);
+                let message = format!("is {actual:?}, the contract is {version}");
+                issues.push(ValidationIssue::at("version", &message, "MSH-12"));
             }
         }
-        Ok(result(issues))
-    }
-}
-
-fn result(issues: Vec<ValidationIssue>) -> ValidationResult {
-    ValidationResult {
-        valid: issues.is_empty(),
-        issues,
+        Ok(ValidationResult::of(issues))
     }
 }
 
@@ -324,11 +313,7 @@ impl ContractFactory for Hl7v2Factory {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use xcore::StreamId;
-
-    fn stream(text: &str) -> Stream {
-        Stream::new(StreamId::new(1), text.as_bytes().to_vec(), None)
-    }
+    use contract::fixture::stream;
 
     const ADT: &str = "MSH|^~\\&|LAB|HOSP|EMR|CLINIC|20260908103000||ADT^A01|MSG0001|P|2.5\r\
 PID|1||123456^^^HOSP^MR||DOE^JOHN||19800101|M\rPV1|1|I|WARD^101^A\r";
