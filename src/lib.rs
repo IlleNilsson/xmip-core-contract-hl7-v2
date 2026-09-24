@@ -17,7 +17,7 @@
 //! composes it from the message it answers, which is what a Receive Location
 //! over `mllp` writes back on the connection.
 
-use sdk::contract::{
+use contract::{
     Contract, ContractDescriptor, ContractError, ContractFactory, ContractId, ValidationIssue,
     ValidationResult,
 };
