@@ -209,7 +209,7 @@ impl Contract for Hl7v2 {
 
     fn validate(&self, stream: &Stream) -> Result<ValidationResult, ContractError> {
         let mut issues = Vec::new();
-        let text = match std::str::from_utf8(stream.bytes()) {
+        let text = match stream.text() {
             Ok(text) => text,
             Err(error) => {
                 return Ok(ValidationResult::of(vec![malformed(
