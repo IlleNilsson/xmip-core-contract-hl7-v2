@@ -22,6 +22,7 @@ use contract::{
     ValidationResult,
 };
 use stream::Stream;
+use xcore::settings::{Applies, Kind, Presence, Setting, Settings};
 
 /// The bound message type: `ADT^A01`, optionally with a version.
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -302,6 +303,10 @@ impl ContractFactory for Hl7v2Factory {
         "hl7-v2"
     }
 
+    fn settings(&self) -> &'static Settings {
+        SETTINGS
+    }
+
     fn load(&self, reference: &str) -> Result<Box<dyn Contract>, ContractError> {
         if reference.trim().is_empty() {
             return Ok(Box::new(Hl7v2::new()));
@@ -309,6 +314,18 @@ impl ContractFactory for Hl7v2Factory {
         Ok(Box::new(Hl7v2::of(MessageType::parse(reference)?)))
     }
 }
+
+/// What a Location gives this contract (ADR-0064, amendment 2026-09-26).
+const SETTINGS: &Settings = &Settings {
+    technology: env!("CARGO_PKG_NAME"),
+    settings: &[Setting {
+        name: "reference",
+        kind: Kind::Text,
+        presence: Presence::Optional,
+        meaning: "The message type, ADT^A01 or ADT^A01:2.5; left out, any message holds.",
+        applies: Applies::Both,
+    }],
+};
 
 #[cfg(test)]
 mod tests {
@@ -390,5 +407,30 @@ PID|1||123456^^^HOSP^MR||DOE^JOHN||19800101|M\rPV1|1|I|WARD^101^A\r";
             "hl7-v2:ORU^R01"
         );
         assert!(factory.load("nonsense").is_err());
+    }
+
+    #[test]
+    fn hl7_v2_declares_its_settings_and_reads_through_them() {
+        assert!(SETTINGS.problems().is_empty(), "{:?}", SETTINGS.problems());
+        let given = |name: &str, value: &str| {
+            (
+                name.to_string(),
+                xcore::settings::Given::Text(value.to_string()),
+            )
+        };
+        assert!(Hl7v2Factory.open(Applies::Both, &[]).is_ok(), "bare");
+        let bound = Hl7v2Factory
+            .open(Applies::Receive, &[given("reference", "ADT^A01:2.5")])
+            .expect("bound");
+        assert!(bound.descriptor().id.0.contains("hl7-v2:ADT^A01"));
+        let refused = Hl7v2Factory
+            .open(Applies::Send, &[given("unheard_of", "x")])
+            .err()
+            .expect("an unknown setting is refused");
+        assert!(
+            refused.message.contains("unheard_of"),
+            "{}",
+            refused.message
+        );
     }
 }
