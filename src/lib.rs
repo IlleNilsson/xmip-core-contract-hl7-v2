@@ -71,6 +71,69 @@ pub struct Encoding {
     pub subcomponent: char,
 }
 
+impl Encoding {
+    /// `text` as the value it spells: the escape sequences HL7 v2 writes for
+    /// its own characters (`\F\`, `\S\`, `\T\`, `\R\`, `\E\`) read back,
+    /// any other sequence left as written.
+    #[must_use]
+    pub fn unescape(&self, text: &str) -> String {
+        let e = self.escape;
+        if !text.contains(e) {
+            return text.to_string();
+        }
+        let mut out = String::with_capacity(text.len());
+        let mut rest = text;
+        while let Some(at) = rest.find(e) {
+            out.push_str(&rest[..at]);
+            let after = &rest[at + e.len_utf8()..];
+            let mut sequence = after.chars();
+            let read = match (sequence.next(), sequence.next()) {
+                (Some('F'), Some(end)) if end == e => Some(self.field),
+                (Some('S'), Some(end)) if end == e => Some(self.component),
+                (Some('T'), Some(end)) if end == e => Some(self.subcomponent),
+                (Some('R'), Some(end)) if end == e => Some(self.repetition),
+                (Some('E'), Some(end)) if end == e => Some(e),
+                _ => None,
+            };
+            if let Some(character) = read {
+                out.push(character);
+                rest = &after[1 + e.len_utf8()..];
+            } else {
+                out.push(e);
+                rest = after;
+            }
+        }
+        out.push_str(rest);
+        out
+    }
+
+    /// `value` as a field writes it: every one of the encoding characters
+    /// escaped, the reverse of [`Encoding::unescape`].
+    #[must_use]
+    pub fn escape(&self, value: &str) -> String {
+        let mut out = String::with_capacity(value.len());
+        for character in value.chars() {
+            let letter = match character {
+                c if c == self.escape => Some('E'),
+                c if c == self.field => Some('F'),
+                c if c == self.component => Some('S'),
+                c if c == self.subcomponent => Some('T'),
+                c if c == self.repetition => Some('R'),
+                _ => None,
+            };
+            match letter {
+                Some(letter) => {
+                    out.push(self.escape);
+                    out.push(letter);
+                    out.push(self.escape);
+                }
+                None => out.push(character),
+            }
+        }
+        out
+    }
+}
+
 /// A message read into segments and fields, enough to judge and to answer.
 pub struct Message<'a> {
     pub encoding: Encoding,
