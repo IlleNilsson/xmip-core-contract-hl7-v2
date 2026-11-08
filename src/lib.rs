@@ -157,10 +157,11 @@ impl<'a> Message<'a> {
         let mut encoding_chars = chars.take(5);
         let field = encoding_chars
             .next()
-            .ok_or_else(|| malformed("MSH-1 has no field separator", "MSH-1"))?;
+            .filter(char::is_ascii)
+            .ok_or_else(|| malformed("MSH-1 is not one ASCII field separator", "MSH-1"))?;
         let rest: Vec<char> = encoding_chars.collect();
-        if rest.len() < 4 || rest.contains(&field) {
-            return Err(malformed("MSH-2 is not four encoding characters", "MSH-2"));
+        if rest.len() < 4 || rest.contains(&field) || !rest.iter().all(char::is_ascii) {
+            return Err(malformed("MSH-2 is not four ASCII characters", "MSH-2"));
         }
         let encoding = Encoding {
             field,
@@ -176,17 +177,21 @@ impl<'a> Message<'a> {
             .enumerate()
         {
             let mut fields: Vec<&str> = line.split(field).collect();
+            let at = || format!("segment {}", ordinal + 1);
             if fields[0].len() != 3 || !fields[0].bytes().all(|b| b.is_ascii_alphanumeric()) {
-                let at = format!("segment {}", ordinal + 1);
                 return Err(malformed(
                     &format!("{:?} is not a segment identifier", fields[0]),
-                    &at,
+                    &at(),
                 ));
             }
             if fields[0] == "MSH" {
-                // MSH-1 is the separator the split consumed; put it back so
-                // MSH-n is index n like every other segment.
-                fields.insert(1, &line[3..4]);
+                // MSH-1 is the separator the split consumed, ASCII: put it
+                // back so MSH-n is index n like every other segment.
+                let separator = line.get(3..4).filter(|at| at.starts_with(field));
+                let Some(separator) = separator else {
+                    return Err(malformed("an MSH segment lacks its separator", &at()));
+                };
+                fields.insert(1, separator);
             }
             segments.push(fields);
         }
@@ -417,6 +422,13 @@ PID|1||123456^^^HOSP^MR||DOE^JOHN||19800101|M\rPV1|1|I|WARD^101^A\r";
             ("<xml/>", "MSH"),
             ("MSH|^~\\&|A\rBAD SEGMENT|x\r", "segment 2"),
             ("MSH|^~|&|A\r", "MSH-2"),
+            // Each panicked the parser: a bare MSH has no byte after its
+            // identifier, and a multi-byte separator is cut inside itself.
+            ("MSH", "MSH-1"),
+            ("MSH|^~\\&|A\rMSH\r", "segment 2"),
+            ("MSH|^~\\&|A\rMSH^x|y\r", "segment 2"),
+            ("MSH\u{e9}^~\\&\u{e9}A\r", "MSH-1"),
+            ("MSH|^~\\\u{e9}|A\r", "MSH-2"),
         ];
         for (text, path) in cases {
             let held = Hl7v2::new().validate(&stream(text)).expect("validates");
