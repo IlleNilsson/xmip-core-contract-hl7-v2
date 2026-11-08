@@ -272,12 +272,12 @@ impl Contract for Hl7v2 {
     }
 
     fn identify(&self, stream: &Stream) -> Result<bool, ContractError> {
-        Ok(stream.bytes().starts_with(b"MSH"))
+        Ok(stream.load()?.starts_with(b"MSH"))
     }
 
     fn validate(&self, stream: &Stream) -> Result<ValidationResult, ContractError> {
         let mut issues = Vec::new();
-        let text = match stream.text() {
+        let text = match contract::text(stream)? {
             Ok(text) => text,
             Err(error) => {
                 return Ok(ValidationResult::of(vec![malformed(
