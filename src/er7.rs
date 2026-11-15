@@ -1,6 +1,8 @@
 //! An HL7 v2 message in ER7, read: the encoding characters its `MSH`
-//! declares, and its segments walked one at a time by the Foundation's one
-//! segment walk (`message::segment`), which the ER7 shape sections by too:
+//! declares, as the ER7 shape's one reader of the `MSH` reads them
+//! (`shape::encoding`), and its segments walked one at a time by the
+//! Foundation's one segment walk (`message::segment`), which the ER7 shape
+//! sections by too:
 //! every line break ends a segment, an empty line is none, nothing but line
 //! breaks stands between two, and the last segment ends where the text
 //! does. What reads one field cuts only its
@@ -9,11 +11,12 @@
 //! message is refused in the same words, at the same segment, by both.
 
 use contract::ValidationIssue;
-use message::segment::{Delimiters, Walk};
+use message::segment::Walk;
 
 use crate::malformed;
 
-/// The encoding characters a message declares in MSH-1 and MSH-2.
+/// The encoding characters a message declares in MSH-1 and MSH-2, as text
+/// reads and escapes them.
 #[derive(Clone, Copy, Debug)]
 pub struct Encoding {
     pub field: char,
@@ -24,41 +27,31 @@ pub struct Encoding {
 }
 
 impl Encoding {
-    /// What `text`'s `MSH` declares.
+    /// What `text`'s `MSH` declares, as the ER7 shape reads it: the issue in
+    /// the shape's words, placed at the identifier, MSH-1 or MSH-2 by the
+    /// byte where it was found.
     ///
     /// # Errors
     /// The issue that makes it not an HL7 message: no `MSH` at its head, or
     /// MSH-1 or MSH-2 not ASCII and distinct.
-    fn declared(text: &str) -> Result<Self, ValidationIssue> {
-        let Some(after) = text.strip_prefix("MSH") else {
-            return Err(malformed("the message does not start with MSH", "MSH"));
-        };
-        let mut encoding_chars = after.chars().take(5);
-        let field = encoding_chars
-            .next()
-            .filter(char::is_ascii)
-            .ok_or_else(|| malformed("MSH-1 is not one ASCII field separator", "MSH-1"))?;
-        let rest: Vec<char> = encoding_chars.collect();
-        if rest.len() < 4 || rest.contains(&field) || !rest.iter().all(char::is_ascii) {
-            return Err(malformed("MSH-2 is not four ASCII characters", "MSH-2"));
-        }
-        Ok(Self {
+    fn declared(text: &str) -> Result<([u8; 5], Self), ValidationIssue> {
+        let declared = shape::encoding(text.as_bytes()).map_err(|refused| {
+            let at = match refused.offset.unwrap_or_default() {
+                0..3 => "MSH",
+                3 => "MSH-1",
+                _ => "MSH-2",
+            };
+            malformed(&refused.reason, at)
+        })?;
+        let [field, component, repetition, escape, subcomponent] = declared.map(char::from);
+        let encoding = Self {
             field,
-            component: rest[0],
-            repetition: rest[1],
-            escape: rest[2],
-            subcomponent: rest[3],
-        })
-    }
-
-    /// What the walk cuts by: every line break ends a segment, and the last
-    /// one ends where the text does. MSH-1 and MSH-2 are ASCII, as
-    /// [`Encoding::declared`] holds them.
-    fn delimiters(self) -> Delimiters {
-        let byte = |ch: char| u8::try_from(ch).unwrap_or_default();
-        Delimiters::new(b'\r', byte(self.field), byte(self.component))
-            .ended_by_line_breaks()
-            .open_at_the_end()
+            component,
+            repetition,
+            escape,
+            subcomponent,
+        };
+        Ok((declared, encoding))
     }
 
     /// `text` as the value it spells: the escape sequences HL7 v2 writes for
@@ -139,11 +132,14 @@ impl<'a> Message<'a> {
     /// The issue that makes its head not an HL7 message's.
     pub fn walk(text: &'a str) -> Result<(Encoding, Segments<'a>), ValidationIssue> {
         let text = text.trim_end_matches(['\r', '\n']);
-        let encoding = Encoding::declared(text)?;
+        let (declared, encoding) = Encoding::declared(text)?;
+        // The shape's delimiters, and the last segment ends where the text
+        // does.
+        let delimiters = shape::delimiters(declared).open_at_the_end();
         let segments = Segments {
             text,
             field: encoding.field,
-            walk: Some(encoding.delimiters().walk(text.as_bytes())),
+            walk: Some(delimiters.walk(text.as_bytes())),
             ordinal: 0,
         };
         Ok((encoding, segments))
@@ -309,6 +305,33 @@ PID|1||123456^^^HOSP^MR||DOE^JOHN||19800101|M\rPV1|1|I|WARD^101^A\r";
             }
             assert_eq!(lying.field(fields.len()), None);
         }
+    }
+
+    /// One reader of the `MSH`: the shape's, its refusal placed where the
+    /// byte it names lies.
+    #[test]
+    fn the_head_is_read_by_the_shape_and_refused_in_its_words() {
+        let (encoding, _) = Message::walk(ADT).expect("declared");
+        let declared = shape::encoding(ADT.as_bytes()).expect("declared");
+        let read = [
+            encoding.field,
+            encoding.component,
+            encoding.repetition,
+            encoding.escape,
+            encoding.subcomponent,
+        ];
+        assert_eq!(read, declared.map(char::from));
+        let refused = |text: &str| {
+            let issue = Message::parse(text).err().expect("refused");
+            (issue.message, issue.path.unwrap_or_default())
+        };
+        let placed = |message: &str, path: &str| (message.to_string(), path.to_string());
+        assert_eq!(refused("PID|1\r"), placed("no MSH at the head", "MSH"));
+        let short = "an MSH shorter than its encoding characters";
+        assert_eq!(refused("MSH"), placed(short, "MSH-1"));
+        assert_eq!(refused("MSH|^~"), placed(short, "MSH-2"));
+        let repeated = "an MSH with an encoding character that is its field separator";
+        assert_eq!(refused("MSH|^~|&|A\r"), placed(repeated, "MSH-2"));
     }
 
     #[test]

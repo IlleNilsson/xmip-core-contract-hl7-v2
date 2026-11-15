@@ -5,7 +5,11 @@ the HL7 v2 content contract: a sound ER7 message always, of a bound message type
 A message is read by the Foundation's one segment walk
 ([xmip-core-message](https://github.com/IlleNilsson/xmip-core-message)'s
 `segment`, which the ER7 shape sections by too): `er7::Message::walk` reads
-the encoding characters `MSH` declares and hands the walk its separators,
+the encoding characters `MSH` declares by the ER7 shape's one reader
+([xmip-core-message-hl7-er7](https://github.com/IlleNilsson/xmip-core-message-hl7-er7)'s
+`encoding`, the shape of the same standard and the one technology this
+contract depends on, ADR-0044, amendment 2026-11-15) and hands the walk its
+separators,
 every line break ending a segment and the last ending with the text, and
 holds each identifier to three letters or digits. The contract cuts every
 segment into its fields (`er7::Message::parse`), and the `hl7-v2` path
