@@ -7,8 +7,9 @@
 //!
 //! Well-formed here is a *sound ER7 message*: it opens with `MSH`, MSH-1 is
 //! the field separator and MSH-2 the four encoding characters, every segment
-//! starts with a three-character identifier and ends at a carriage return,
-//! and MSH-9 names a message type. Conformance is the message type: a Location
+//! starts with a three-character identifier and ends at a line break, and
+//! MSH-9 names a message type. It is read by the one segment walk
+//! ([`er7::Message::walk`]). Conformance is the message type: a Location
 //! that names this contract with `ADT^A01` bound has every message's MSH-9
 //! held to it, and `ADT^A01:2.5` holds MSH-12 as well. Every HL7 v2 version is
 //! a version of this one technology and lives here.
@@ -17,10 +18,13 @@
 //! composes it from the message it answers, which is what a Receive Location
 //! over `mllp` writes back on the connection.
 
+pub mod er7;
+
 use contract::{
     Contract, ContractDescriptor, ContractError, ContractFactory, ContractId, ValidationIssue,
     ValidationResult,
 };
+use er7::Message;
 use stream::Stream;
 use xcore::settings::{Applies, Kind, Presence, Setting, Settings};
 
@@ -58,164 +62,6 @@ impl MessageType {
             Some(version) => format!("{}^{}:{version}", self.code, self.event),
             None => format!("{}^{}", self.code, self.event),
         }
-    }
-}
-
-/// The encoding characters a message declares in MSH-1 and MSH-2.
-#[derive(Clone, Copy, Debug)]
-pub struct Encoding {
-    pub field: char,
-    pub component: char,
-    pub repetition: char,
-    pub escape: char,
-    pub subcomponent: char,
-}
-
-impl Encoding {
-    /// `text` as the value it spells: the escape sequences HL7 v2 writes for
-    /// its own characters (`\F\`, `\S\`, `\T\`, `\R\`, `\E\`) read back,
-    /// any other sequence left as written.
-    #[must_use]
-    pub fn unescape(&self, text: &str) -> String {
-        let e = self.escape;
-        if !text.contains(e) {
-            return text.to_string();
-        }
-        let mut out = String::with_capacity(text.len());
-        let mut rest = text;
-        while let Some(at) = rest.find(e) {
-            out.push_str(&rest[..at]);
-            let after = &rest[at + e.len_utf8()..];
-            let mut sequence = after.chars();
-            let read = match (sequence.next(), sequence.next()) {
-                (Some('F'), Some(end)) if end == e => Some(self.field),
-                (Some('S'), Some(end)) if end == e => Some(self.component),
-                (Some('T'), Some(end)) if end == e => Some(self.subcomponent),
-                (Some('R'), Some(end)) if end == e => Some(self.repetition),
-                (Some('E'), Some(end)) if end == e => Some(e),
-                _ => None,
-            };
-            if let Some(character) = read {
-                out.push(character);
-                rest = &after[1 + e.len_utf8()..];
-            } else {
-                out.push(e);
-                rest = after;
-            }
-        }
-        out.push_str(rest);
-        out
-    }
-
-    /// `value` as a field writes it: every one of the encoding characters
-    /// escaped, the reverse of [`Encoding::unescape`].
-    #[must_use]
-    pub fn escape(&self, value: &str) -> String {
-        let mut out = String::with_capacity(value.len());
-        for character in value.chars() {
-            let letter = match character {
-                c if c == self.escape => Some('E'),
-                c if c == self.field => Some('F'),
-                c if c == self.component => Some('S'),
-                c if c == self.subcomponent => Some('T'),
-                c if c == self.repetition => Some('R'),
-                _ => None,
-            };
-            match letter {
-                Some(letter) => {
-                    out.push(self.escape);
-                    out.push(letter);
-                    out.push(self.escape);
-                }
-                None => out.push(character),
-            }
-        }
-        out
-    }
-}
-
-/// A message read into segments and fields, enough to judge and to answer.
-pub struct Message<'a> {
-    pub encoding: Encoding,
-    /// Each segment's fields, the identifier at index 0. For `MSH` field 1 is
-    /// the separator itself, so `MSH-9` is index 9 there as everywhere.
-    pub segments: Vec<Vec<&'a str>>,
-}
-
-impl<'a> Message<'a> {
-    /// Read `text` as ER7.
-    ///
-    /// # Errors
-    /// The one issue that makes it not an HL7 message.
-    pub fn parse(text: &'a str) -> Result<Self, ValidationIssue> {
-        let text = text.trim_end_matches(['\r', '\n']);
-        let mut chars = text.chars();
-        let header: String = chars.by_ref().take(3).collect();
-        if header != "MSH" {
-            return Err(malformed("the message does not start with MSH", "MSH"));
-        }
-        let mut encoding_chars = chars.take(5);
-        let field = encoding_chars
-            .next()
-            .filter(char::is_ascii)
-            .ok_or_else(|| malformed("MSH-1 is not one ASCII field separator", "MSH-1"))?;
-        let rest: Vec<char> = encoding_chars.collect();
-        if rest.len() < 4 || rest.contains(&field) || !rest.iter().all(char::is_ascii) {
-            return Err(malformed("MSH-2 is not four ASCII characters", "MSH-2"));
-        }
-        let encoding = Encoding {
-            field,
-            component: rest[0],
-            repetition: rest[1],
-            escape: rest[2],
-            subcomponent: rest[3],
-        };
-        let mut segments = Vec::new();
-        for (ordinal, line) in text
-            .split(['\r', '\n'])
-            .filter(|l| !l.is_empty())
-            .enumerate()
-        {
-            let mut fields: Vec<&str> = line.split(field).collect();
-            let at = || format!("segment {}", ordinal + 1);
-            if fields[0].len() != 3 || !fields[0].bytes().all(|b| b.is_ascii_alphanumeric()) {
-                return Err(malformed(
-                    &format!("{:?} is not a segment identifier", fields[0]),
-                    &at(),
-                ));
-            }
-            if fields[0] == "MSH" {
-                // MSH-1 is the separator the split consumed, ASCII: put it
-                // back so MSH-n is index n like every other segment.
-                let separator = line.get(3..4).filter(|at| at.starts_with(field));
-                let Some(separator) = separator else {
-                    return Err(malformed("an MSH segment lacks its separator", &at()));
-                };
-                fields.insert(1, separator);
-            }
-            segments.push(fields);
-        }
-        Ok(Self { encoding, segments })
-    }
-
-    /// Field `index` of the first segment named `id`, or empty.
-    #[must_use]
-    pub fn field(&self, id: &str, index: usize) -> &'a str {
-        self.segments
-            .iter()
-            .find(|s| s[0] == id)
-            .and_then(|s| s.get(index).copied())
-            .unwrap_or("")
-    }
-
-    /// MSH-9 as `CODE^EVENT`, its first two components.
-    #[must_use]
-    pub fn message_type(&self) -> (String, String) {
-        let mut parts = self.field("MSH", 9).split(self.encoding.component);
-        (
-            parts.next().unwrap_or("").to_ascii_uppercase(),
-            parts.next().unwrap_or("").to_ascii_uppercase(),
-        )
     }
 }
 
