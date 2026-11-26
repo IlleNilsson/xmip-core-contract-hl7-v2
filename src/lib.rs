@@ -17,18 +17,33 @@
 //! An HL7 message is answered, and the answer is an HL7 message; [`acknowledge`]
 //! composes it from the message it answers, which is what a Receive Location
 //! over `mllp` writes back on the connection.
+//!
+//! **Built with its `declaration` feature alone** the crate is
+//! [`declaration`], what a Location naming it is configured with and the
+//! name a Validate step names it by, and none of the code above, which is
+//! behind the default feature: what the surfaces' library carries (ADR-0064,
+//! amendment 2026-11-26).
 
+#[cfg(feature = "declaration")]
+pub mod declaration;
+
+#[cfg(feature = "default")]
 pub mod er7;
 
+#[cfg(feature = "default")]
 use contract::{
     Contract, ContractDescriptor, ContractError, ContractFactory, ContractId, ValidationIssue,
     ValidationResult,
 };
+#[cfg(feature = "default")]
 use er7::Message;
+#[cfg(feature = "default")]
 use stream::Stream;
-use xcore::settings::{Applies, Kind, Presence, Setting, Settings};
+#[cfg(feature = "default")]
+use xcore::settings::Settings;
 
 /// The bound message type: `ADT^A01`, optionally with a version.
+#[cfg(feature = "default")]
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct MessageType {
     pub code: String,
@@ -36,6 +51,7 @@ pub struct MessageType {
     pub version: Option<String>,
 }
 
+#[cfg(feature = "default")]
 impl MessageType {
     /// `ADT^A01` or `ADT^A01:2.5`.
     ///
@@ -68,16 +84,19 @@ impl MessageType {
 /// A `malformed` issue placed at `path`: ER7 can always say which segment or
 /// field stopped it being a message, so the capability's unplaced one is not
 /// used here.
+#[cfg(feature = "default")]
 fn malformed(message: &str, path: &str) -> ValidationIssue {
     ValidationIssue::at("malformed", message, path)
 }
 
 /// The HL7 v2 contract, bare or bound to a message type.
+#[cfg(feature = "default")]
 pub struct Hl7v2 {
     descriptor: ContractDescriptor,
     message_type: Option<MessageType>,
 }
 
+#[cfg(feature = "default")]
 impl Hl7v2 {
     /// A sound message of any type.
     #[must_use]
@@ -98,12 +117,14 @@ impl Hl7v2 {
     }
 }
 
+#[cfg(feature = "default")]
 impl Default for Hl7v2 {
     fn default() -> Self {
         Self::new()
     }
 }
 
+#[cfg(feature = "default")]
 fn descriptor(id: &str) -> ContractDescriptor {
     ContractDescriptor {
         id: ContractId(id.to_string()),
@@ -112,6 +133,7 @@ fn descriptor(id: &str) -> ContractDescriptor {
     }
 }
 
+#[cfg(feature = "default")]
 impl Contract for Hl7v2 {
     fn descriptor(&self) -> &ContractDescriptor {
         &self.descriptor
@@ -161,6 +183,7 @@ impl Contract for Hl7v2 {
 }
 
 /// What an acknowledgement says.
+#[cfg(feature = "default")]
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum Acknowledgement {
     /// Application accept.
@@ -174,6 +197,7 @@ pub enum Acknowledgement {
 /// The `ACK` for `message`: MSH with sender and receiver swapped, the same
 /// control id echoed in MSA-2, and `text` as MSA-3 when there is something to
 /// say. `original` is the text of the message answered.
+#[cfg(feature = "default")]
 #[must_use]
 pub fn acknowledge(original: &str, verdict: Acknowledgement, text: &str) -> String {
     let code = match verdict {
@@ -210,15 +234,17 @@ pub fn acknowledge(original: &str, verdict: Acknowledgement, text: &str) -> Stri
 
 /// Loads the contract a Location names: an empty reference is the bare
 /// contract, anything else a message type, `ADT^A01` or `ADT^A01:2.5`.
+#[cfg(feature = "default")]
 pub struct Hl7v2Factory;
 
+#[cfg(feature = "default")]
 impl ContractFactory for Hl7v2Factory {
     fn technology(&self) -> &'static str {
-        "hl7-v2"
+        declaration::NAME
     }
 
     fn settings(&self) -> &'static Settings {
-        SETTINGS
+        declaration::SETTINGS
     }
 
     fn load(&self, reference: &str) -> Result<Box<dyn Contract>, ContractError> {
@@ -228,18 +254,6 @@ impl ContractFactory for Hl7v2Factory {
         Ok(Box::new(Hl7v2::of(MessageType::parse(reference)?)))
     }
 }
-
-/// What a Location gives this contract (ADR-0064, amendment 2026-09-26).
-const SETTINGS: &Settings = &Settings {
-    technology: env!("CARGO_PKG_NAME"),
-    settings: &[Setting {
-        name: "reference",
-        kind: Kind::Text,
-        presence: Presence::Optional,
-        meaning: "The message type, ADT^A01 or ADT^A01:2.5; left out, any message holds.",
-        applies: Applies::Both,
-    }],
-};
 
 #[cfg(test)]
 mod tests {
@@ -332,6 +346,8 @@ PID|1||123456^^^HOSP^MR||DOE^JOHN||19800101|M\rPV1|1|I|WARD^101^A\r";
 
     #[test]
     fn hl7_v2_declares_its_settings_and_reads_through_them() {
+        use declaration::SETTINGS;
+        use xcore::settings::Applies;
         assert!(SETTINGS.problems().is_empty(), "{:?}", SETTINGS.problems());
         let given = |name: &str, value: &str| {
             (
