@@ -1,6 +1,6 @@
 //! An HL7 v2 message in ER7, read: the encoding characters its `MSH`
 //! declares, as the ER7 shape's one reader of the `MSH` reads them
-//! (`shape::encoding`), and its segments walked one at a time by the
+//! (`er7_shape::encoding`), and its segments walked one at a time by the
 //! Foundation's one segment walk (`message::segment`), which the ER7 shape
 //! sections by too:
 //! every line break ends a segment, an empty line is none, nothing but line
@@ -35,7 +35,7 @@ impl Encoding {
     /// The issue that makes it not an HL7 message: no `MSH` at its head, or
     /// MSH-1 or MSH-2 not ASCII and distinct.
     fn declared(text: &str) -> Result<([u8; 5], Self), ValidationIssue> {
-        let declared = shape::encoding(text.as_bytes()).map_err(|refused| {
+        let declared = er7_shape::encoding(text.as_bytes()).map_err(|refused| {
             let at = match refused.offset.unwrap_or_default() {
                 0..3 => "MSH",
                 3 => "MSH-1",
@@ -135,7 +135,7 @@ impl<'a> Message<'a> {
         let (declared, encoding) = Encoding::declared(text)?;
         // The shape's delimiters, and the last segment ends where the text
         // does.
-        let delimiters = shape::delimiters(declared).open_at_the_end();
+        let delimiters = er7_shape::delimiters(declared).open_at_the_end();
         let segments = Segments {
             text,
             field: encoding.field,
@@ -312,7 +312,7 @@ PID|1||123456^^^HOSP^MR||DOE^JOHN||19800101|M\rPV1|1|I|WARD^101^A\r";
     #[test]
     fn the_head_is_read_by_the_shape_and_refused_in_its_words() {
         let (encoding, _) = Message::walk(ADT).expect("declared");
-        let declared = shape::encoding(ADT.as_bytes()).expect("declared");
+        let declared = er7_shape::encoding(ADT.as_bytes()).expect("declared");
         let read = [
             encoding.field,
             encoding.component,
